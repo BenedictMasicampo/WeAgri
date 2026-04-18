@@ -1,0 +1,270 @@
+{
+    "farmers": [
+        {
+            "id": 1,
+            "full_name": "Nestor Reyes",
+            "location": "Science City of Muñoz, Nueva Ecija",
+            "primary_crop": "Rice"
+        }
+    ],
+    "experts": [
+        {
+            "id": 1,
+            "full_name": "Dr. Liza Dizon",
+            "specialty": "Pest Management",
+            "status": "online",
+            "response_minutes": 4,
+            "bio": "Helps farmers respond to disease pressure, insects, and crop protection risks."
+        },
+        {
+            "id": 2,
+            "full_name": "Engr. Mateo Cruz",
+            "specialty": "Soil Health",
+            "status": "online",
+            "response_minutes": 7,
+            "bio": "Focuses on soil fertility, pH correction, and field rehabilitation planning."
+        },
+        {
+            "id": 3,
+            "full_name": "Dr. Ana Velasco",
+            "specialty": "Crop Nutrition",
+            "status": "busy",
+            "response_minutes": 11,
+            "bio": "Supports nutrient planning and deficiency diagnosis for vegetables and cereals."
+        },
+        {
+            "id": 4,
+            "full_name": "Engr. Paulo Ramirez",
+            "specialty": "Irrigation & Farm Practices",
+            "status": "online",
+            "response_minutes": 9,
+            "bio": "Guides irrigation scheduling, drainage, and practical field recovery decisions."
+        }
+    ],
+    "consultations": [
+        {
+            "id": 101,
+            "farmer_id": 1,
+            "title": "Rice Pest and Disease: brown diamond-shaped leaf spots",
+            "crop": "Rice",
+            "category": "Pest and Disease",
+            "urgency": "high",
+            "status": "expert_assigned",
+            "location": "Science City of Muñoz, Nueva Ecija",
+            "assigned_expert_id": 1,
+            "summary": "AI triage detected a likely fungal issue and escalated to an expert.",
+            "created_at": "2026-04-19 08:18:00",
+            "updated_at": "2026-04-19 08:30:00"
+        },
+        {
+            "id": 102,
+            "farmer_id": 1,
+            "title": "Pechay Crop Nutrition: yellowing leaves after fertilizer change",
+            "crop": "Pechay",
+            "category": "Crop Nutrition",
+            "urgency": "medium",
+            "status": "monitoring",
+            "location": "Science City of Muñoz, Nueva Ecija",
+            "assigned_expert_id": null,
+            "summary": "AgroLLM suggested a first-response nutrition check and monitoring plan.",
+            "created_at": "2026-04-18 15:05:00",
+            "updated_at": "2026-04-18 15:16:00"
+        }
+    ],
+    "messages": [
+        {
+            "id": 1001,
+            "consultation_id": 101,
+            "sender_type": "farmer",
+            "sender_name": "Nestor Reyes",
+            "message": "My rice leaves have brown diamond-shaped spots after three days of rain.",
+            "references": [],
+            "created_at": "2026-04-19 08:18:00"
+        },
+        {
+            "id": 1002,
+            "consultation_id": 101,
+            "sender_type": "ai",
+            "sender_name": "AgroLLM",
+            "message": "AgroLLM matched your concern to Pest and Disease guidance for Rice.\n\nImmediate steps:\n- Remove heavily infected leaves if the infection is still localized.\n- Improve air flow and avoid prolonged leaf wetness where possible.\n- Monitor whether lesions expand after continuous rain.\n\nThis looks urgent or complex enough that a human agricultural adviser should confirm the diagnosis and next action.\n\nKnowledge used:\n- Managing rice blast after wet weather - Philippine Rice Disease Field Guide",
+            "references": [
+                "Managing rice blast after wet weather - Philippine Rice Disease Field Guide"
+            ],
+            "created_at": "2026-04-19 08:20:00"
+        },
+        {
+            "id": 1003,
+            "consultation_id": 101,
+            "sender_type": "expert",
+            "sender_name": "Dr. Liza Dizon",
+            "message": "Dr. Liza Dizon here. I reviewed your Rice concern about Pest and Disease.\n\nPriority actions:\n- Remove heavily infected leaves if the infection is still localized. - Improve air flow and avoid prolonged leaf wetness where possible.\n\nPlease keep monitoring the affected area and share photos or field conditions if the issue spreads further.",
+            "references": [],
+            "created_at": "2026-04-19 08:30:00"
+        },
+        {
+            "id": 1004,
+            "consultation_id": 102,
+            "sender_type": "farmer",
+            "sender_name": "Nestor Reyes",
+            "message": "My pechay leaves started turning pale after I changed fertilizer this week.",
+            "references": [],
+            "created_at": "2026-04-18 15:05:00"
+        },
+        {
+            "id": 1005,
+            "consultation_id": 102,
+            "sender_type": "ai",
+            "sender_name": "AgroLLM",
+            "message": "AgroLLM matched your concern to Crop Nutrition guidance for Pechay.\n\nImmediate steps:\n- Compare recent fertilizer rates with the previous schedule before applying more.\n- Inspect whether yellowing starts from older leaves, which may suggest nitrogen deficiency.\n- Water evenly and avoid overcorrecting with concentrated fertilizer.\n\nThis looks suitable for AI first-level guidance, but you should keep monitoring the crop and escalate if symptoms spread.\n\nKnowledge used:\n- Nitrogen deficiency in leafy vegetables - DA Crop Nutrition Notes",
+            "references": [
+                "Nitrogen deficiency in leafy vegetables - DA Crop Nutrition Notes"
+            ],
+            "created_at": "2026-04-18 15:16:00"
+        }
+    ],
+    "notifications": [
+        {
+            "id": 201,
+            "title": "Weather advisory",
+            "body": "Heavy rainfall is expected this afternoon. Check field drainage and standing water areas.",
+            "type": "weather",
+            "is_read": false,
+            "consultation_id": null,
+            "created_at": "2026-04-19 07:55:00"
+        },
+        {
+            "id": 202,
+            "title": "Expert assigned",
+            "body": "Dr. Liza Dizon is now reviewing your rice disease concern.",
+            "type": "consultation",
+            "is_read": false,
+            "consultation_id": 101,
+            "created_at": "2026-04-19 08:21:00"
+        },
+        {
+            "id": 203,
+            "title": "AI update available",
+            "body": "AgroLLM posted a first-response nutrition plan for your pechay concern.",
+            "type": "advisory",
+            "is_read": true,
+            "consultation_id": 102,
+            "created_at": "2026-04-18 15:16:00"
+        }
+    ],
+    "knowledge_base": [
+        {
+            "id": 1,
+            "title": "Managing rice blast after wet weather",
+            "topic": "Pest and Disease",
+            "content": "Rice blast often appears as spindle or diamond-shaped lesions and becomes more aggressive after long wet periods and dense crop canopy conditions.",
+            "recommendations": [
+                "Remove heavily infected leaves if the infection is still localized.",
+                "Improve air flow and avoid prolonged leaf wetness where possible.",
+                "Monitor whether lesions expand after continuous rain."
+            ],
+            "tags": [
+                "rice",
+                "blast",
+                "fungus",
+                "brown spots",
+                "wet weather",
+                "leaf lesions"
+            ],
+            "source": "Philippine Rice Disease Field Guide"
+        },
+        {
+            "id": 2,
+            "title": "Early response for corn fall armyworm",
+            "topic": "Pest and Disease",
+            "content": "Corn fall armyworm pressure often begins with ragged leaves, windowpane feeding, and frass deep in the whorl.",
+            "recommendations": [
+                "Inspect the whorl and leaf funnel for larvae and frass.",
+                "Target interventions early while damage is still localized.",
+                "Record the percentage of affected plants before deciding the next control step."
+            ],
+            "tags": [
+                "corn",
+                "armyworm",
+                "pest",
+                "whorl",
+                "frass"
+            ],
+            "source": "Regional Maize Pest Management Brief"
+        },
+        {
+            "id": 3,
+            "title": "Tomato leaf curl linked to whiteflies",
+            "topic": "Pest and Disease",
+            "content": "Tomato leaf curl combined with whitefly activity can indicate viral pressure that should be contained quickly.",
+            "recommendations": [
+                "Remove severely affected plants if viral symptoms are obvious.",
+                "Reduce whitefly pressure around the crop perimeter.",
+                "Avoid moving tools from affected plants to healthy blocks without cleaning them."
+            ],
+            "tags": [
+                "tomato",
+                "leaf curl",
+                "whitefly",
+                "virus"
+            ],
+            "source": "Protected Vegetable Production Notes"
+        },
+        {
+            "id": 4,
+            "title": "Soil acidity correction before planting",
+            "topic": "Soil Management",
+            "content": "Acidic soil can restrict nutrient availability and root development. Early correction is usually more effective than late in-season fixes.",
+            "recommendations": [
+                "Test field pH before changing the amendment rate.",
+                "Apply lime based on actual pH and soil texture recommendations.",
+                "Mix amendments evenly into the root zone when possible."
+            ],
+            "tags": [
+                "soil",
+                "ph",
+                "acidity",
+                "lime",
+                "amendment"
+            ],
+            "source": "Soil Fertility Extension Manual"
+        },
+        {
+            "id": 5,
+            "title": "Nitrogen deficiency in leafy vegetables",
+            "topic": "Crop Nutrition",
+            "content": "Leafy vegetables may show pale older leaves, slower growth, and reduced vigor when nitrogen supply is low or poorly timed.",
+            "recommendations": [
+                "Compare recent fertilizer rates with the previous schedule before applying more.",
+                "Inspect whether yellowing starts from older leaves, which may suggest nitrogen deficiency.",
+                "Water evenly and avoid overcorrecting with concentrated fertilizer."
+            ],
+            "tags": [
+                "pechay",
+                "vegetable",
+                "yellowing",
+                "nitrogen",
+                "fertilizer"
+            ],
+            "source": "DA Crop Nutrition Notes"
+        },
+        {
+            "id": 6,
+            "title": "Waterlogging response after heavy rain",
+            "topic": "Water and Irrigation",
+            "content": "Standing water can quickly stress roots, reduce oxygen in the soil, and worsen disease pressure if drainage stays blocked.",
+            "recommendations": [
+                "Clear drainage channels first before applying new inputs.",
+                "Avoid field traffic while the soil is saturated to limit compaction.",
+                "Reassess plant recovery 24 to 48 hours after water recedes."
+            ],
+            "tags": [
+                "waterlogging",
+                "rain",
+                "drainage",
+                "flood",
+                "irrigation"
+            ],
+            "source": "Climate-Smart Farm Recovery Guide"
+        }
+    ]
+}
