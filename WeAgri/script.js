@@ -14,11 +14,24 @@ const state = {
     averageResponseMinutes: 0,
     unreadNotifications: 0,
   },
+  dashboardMetrics: null,
+  dashboardSource: "",
+  dashboardTrends: {
+    weather: [],
+    soil_health: [],
+    market_prices: [],
+  },
+  dashboardInsight: "",
+  marketPrices: [],
+  consultants: [],
+  activeConsultantId: null,
+  consultantMessages: [],
   consultations: [],
   experts: [],
   consultantOptions: [],
   notifications: [],
   knowledgeHighlights: [],
+  knowledgeSearch: "",
   admin: null,
   activeConsultationId: null,
   activeAuthView: "login",
@@ -27,12 +40,15 @@ const state = {
       id: `assistant-${Date.now()}`,
       sender: "ai",
       text:
-        "Ask me about pests, crop symptoms, soil, fertilizer, or irrigation.",
+        "Hello, I am AgroLLM. Tell me what you are seeing in the field, and I will give practical first steps for pests, crop symptoms, soil, fertilizer, or irrigation.",
       meta: null,
       time: new Date().toISOString(),
     },
   ],
   pollHandle: null,
+  dashboardPollHandle: null,
+  consultantPollHandle: null,
+  charts: {},
 };
 
 const dom = {
@@ -45,6 +61,23 @@ const dom = {
   signalActiveConsultations: document.getElementById("signal-active-consultations"),
   signalResponseTime: document.getElementById("signal-response-time"),
   signalUnreadAlerts: document.getElementById("signal-unread-alerts"),
+  metricTemperature: document.getElementById("metric-temperature"),
+  metricSoilMoisture: document.getElementById("metric-soil-moisture"),
+  metricCropHealth: document.getElementById("metric-crop-health"),
+  dashboardUpdated: document.getElementById("dashboard-updated"),
+  marketPrices: document.getElementById("market-prices"),
+  dashboardGreetingTitle: document.getElementById("dashboard-greeting-title"),
+  dashboardActiveMetric: document.getElementById("dashboard-active-metric"),
+  dashboardResolvedMetric: document.getElementById("dashboard-resolved-metric"),
+  dashboardWeatherMetric: document.getElementById("dashboard-weather-metric"),
+  dashboardSoilMetric: document.getElementById("dashboard-soil-metric"),
+  dashboardHealthMetric: document.getElementById("dashboard-health-metric"),
+  dashboardConsultationMetric: document.getElementById("dashboard-consultation-metric"),
+  dashboardAiInsight: document.getElementById("dashboard-ai-insight"),
+  dashboardMarketTable: document.getElementById("dashboard-market-table"),
+  weatherTrendChart: document.getElementById("weather-trend-chart"),
+  soilHealthChart: document.getElementById("soil-health-chart"),
+  marketPriceChart: document.getElementById("market-price-chart"),
   heroThreadTitle: document.getElementById("hero-thread-title"),
   heroThreadStatus: document.getElementById("hero-thread-status"),
   heroThreadExpert: document.getElementById("hero-thread-expert"),
@@ -71,6 +104,9 @@ const dom = {
   registerPassword: document.getElementById("register-password"),
   registerLocation: document.getElementById("register-location"),
   registerPrimaryCrop: document.getElementById("register-primary-crop"),
+  registerSoilType: document.getElementById("register-soil-type"),
+  registerCommonIssues: document.getElementById("register-common-issues"),
+  registerFarmScale: document.getElementById("register-farm-scale"),
   registerSpecialty: document.getElementById("register-specialty"),
   registerBio: document.getElementById("register-bio"),
   registerFarmerFields: document.getElementById("register-farmer-fields"),
@@ -100,11 +136,31 @@ const dom = {
   threadInput: document.getElementById("thread-input"),
   threadRoleHint: document.getElementById("thread-role-hint"),
   threadSubmit: document.getElementById("thread-submit"),
+  feedbackForm: document.getElementById("feedback-form"),
+  feedbackHelpfulness: document.getElementById("feedback-helpfulness"),
+  feedbackAccuracy: document.getElementById("feedback-accuracy"),
+  feedbackComment: document.getElementById("feedback-comment"),
+  feedbackSubmit: document.getElementById("feedback-submit"),
+  platformFeedbackForm: document.getElementById("platform-feedback-form"),
+  platformFeedbackRating: document.getElementById("platform-feedback-rating"),
+  platformFeedbackComment: document.getElementById("platform-feedback-comment"),
+  platformFeedbackConfirmation: document.getElementById("platform-feedback-confirmation"),
   scrollThreadBottom: document.getElementById("scroll-thread-bottom"),
   expertList: document.getElementById("expert-list"),
+  consultantDirectory: document.getElementById("consultant-directory"),
+  consultantChatPanel: document.getElementById("consultant-chat-panel"),
+  consultantChatAvatar: document.getElementById("consultant-chat-avatar"),
+  consultantChatStatus: document.getElementById("consultant-chat-status"),
+  consultantChatName: document.getElementById("consultant-chat-name"),
+  consultantMessageThread: document.getElementById("consultant-message-thread"),
+  consultantChatForm: document.getElementById("consultant-chat-form"),
+  consultantChatInput: document.getElementById("consultant-chat-input"),
+  consultantChatSend: document.getElementById("consultant-chat-send"),
   notificationList: document.getElementById("notification-list"),
   adminUserList: document.getElementById("admin-user-list"),
   knowledgeList: document.getElementById("knowledge-list"),
+  knowledgeSearch: document.getElementById("knowledge-search"),
+  knowledgeTopicFilters: document.getElementById("knowledge-topic-filters"),
   assistantShell: document.getElementById("assistant-shell"),
   assistantFab: document.getElementById("assistant-fab"),
   assistantMessages: document.getElementById("assistant-messages"),
@@ -117,11 +173,16 @@ const dom = {
 document.addEventListener("DOMContentLoaded", () => {
   bindEvents();
   setupRevealObserver();
+  setupSectionNavObserver();
+  updateActiveNav(window.location.hash || "#dashboard");
   switchAuthView(state.activeAuthView);
   syncRegisterRoleFields();
   applyBootstrap(window.WEAGRI_INITIAL_STATE || null);
   refreshState();
+  refreshDashboardMetrics();
+  refreshConsultants();
   state.pollHandle = window.setInterval(refreshState, 12000);
+  state.dashboardPollHandle = window.setInterval(refreshDashboardMetrics, 5000);
 });
 
 function bindEvents() {
@@ -134,8 +195,11 @@ function bindEvents() {
     link.addEventListener("click", () => {
       dom.siteNav.classList.remove("is-open");
       dom.navToggle?.setAttribute("aria-expanded", "false");
+      updateActiveNav(link.getAttribute("href") || "");
     });
   });
+
+  window.addEventListener("hashchange", () => updateActiveNav(window.location.hash));
 
   document.querySelectorAll("[data-open-assistant]").forEach((button) => {
     button.addEventListener("click", openAssistant);
@@ -143,6 +207,13 @@ function bindEvents() {
 
   document.querySelectorAll("[data-close-assistant]").forEach((button) => {
     button.addEventListener("click", closeAssistant);
+  });
+
+  document.querySelectorAll("[data-auth-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      switchAuthView(button.dataset.authView || "login");
+      document.getElementById("landing")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   });
 
   dom.showLogin?.addEventListener("click", () => switchAuthView("login"));
@@ -156,10 +227,17 @@ function bindEvents() {
 
   dom.consultationForm?.addEventListener("submit", submitConsultation);
   dom.threadForm?.addEventListener("submit", submitThreadMessage);
+  dom.feedbackForm?.addEventListener("submit", submitFeedback);
+  dom.platformFeedbackForm?.addEventListener("submit", submitPlatformFeedback);
+  dom.consultantChatForm?.addEventListener("submit", submitConsultantMessage);
   dom.assignConsultantButton?.addEventListener("click", submitAssignment);
   dom.updateStatusButton?.addEventListener("click", submitStatusUpdate);
   dom.assistantForm?.addEventListener("submit", submitAssistantMessage);
   dom.scrollThreadBottom?.addEventListener("click", () => scrollMessagesToBottom(dom.threadMessages));
+  dom.knowledgeSearch?.addEventListener("input", () => {
+    state.knowledgeSearch = dom.knowledgeSearch.value.trim();
+    renderKnowledge();
+  });
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
@@ -185,12 +263,82 @@ function setupRevealObserver() {
   elements.forEach((element) => observer.observe(element));
 }
 
+function setupSectionNavObserver() {
+  const sections = ["dashboard", "experts", "consultations", "knowledge", "feedback", "contact"]
+    .map((id) => document.getElementById(id))
+    .filter(Boolean);
+
+  if (!sections.length) {
+    return;
+  }
+
+  const observer = new IntersectionObserver(
+    (entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+
+      if (visible?.target?.id) {
+        updateActiveNav(`#${visible.target.id}`);
+      }
+    },
+    { threshold: [0.28, 0.5], rootMargin: "-18% 0px -55% 0px" }
+  );
+
+  sections.forEach((section) => observer.observe(section));
+}
+
 async function refreshState() {
   try {
     const response = await fetchJson("api/bootstrap.php");
     if (response.ok && response.state) {
       applyBootstrap(response.state);
     }
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+async function refreshDashboardMetrics() {
+  try {
+    const response = await fetchJson("api/v1/get_dashboard.php");
+    state.dashboardMetrics = response.metrics || null;
+    state.dashboardSource = response.source || "";
+    state.dashboardTrends = {
+      weather: Array.isArray(response.trends?.weather) ? response.trends.weather : [],
+      soil_health: Array.isArray(response.trends?.soil_health) ? response.trends.soil_health : [],
+      market_prices: Array.isArray(response.trends?.market_prices) ? response.trends.market_prices : [],
+    };
+    state.dashboardInsight = response.insight || "";
+    state.marketPrices = Array.isArray(response.market_prices) ? response.market_prices : [];
+    renderDashboardMetrics(response);
+  } catch (error) {
+    console.error(error);
+    if (dom.dashboardUpdated) {
+      dom.dashboardUpdated.textContent = "Live feed unavailable";
+    }
+  }
+}
+
+async function refreshConsultants() {
+  try {
+    const response = await fetchJson("api/v1/consultants.php");
+    state.consultants = Array.isArray(response.consultants) ? response.consultants : [];
+    renderConsultantDirectory();
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+async function refreshConsultantMessages() {
+  if (!state.activeConsultantId) {
+    return;
+  }
+
+  try {
+    const response = await fetchJson(`api/v1/get_messages.php?consultant_id=${encodeURIComponent(state.activeConsultantId)}`);
+    state.consultantMessages = Array.isArray(response.messages) ? response.messages : [];
+    renderConsultantChat();
   } catch (error) {
     console.error(error);
   }
@@ -238,7 +386,9 @@ function applyBootstrap(payload) {
 }
 
 function renderDashboard() {
+  renderAppVisibility();
   renderSignals();
+  renderDashboardMetrics();
   renderAuthSummary();
   renderConsultationAccess();
   renderConsultationList();
@@ -248,40 +398,452 @@ function renderDashboard() {
   renderAdminOverview();
   renderKnowledge();
   renderAssistantMessages();
+  renderConsultantDirectory();
+}
+
+function renderAppVisibility() {
+  document.body.classList.toggle("is-authenticated", state.auth.authenticated);
+  document.body.classList.toggle("is-guest", !state.auth.authenticated);
+}
+
+function updateActiveNav(hash) {
+  const normalizedHash = hash || "#dashboard";
+  document.querySelectorAll("#site-nav a").forEach((link) => {
+    link.classList.toggle("is-active", link.getAttribute("href") === normalizedHash);
+  });
+}
+
+function renderConsultantDirectory() {
+  if (!dom.consultantDirectory) {
+    return;
+  }
+
+  dom.consultantDirectory.innerHTML = "";
+
+  if (!state.consultants.length) {
+    dom.consultantDirectory.appendChild(buildEmptyState("Consultants are loading. You can still ask AgroLLM while waiting."));
+    return;
+  }
+
+  state.consultants.forEach((consultant) => {
+    const card = document.createElement("article");
+    card.className = "consultant-profile-card";
+    if (consultant.id === state.activeConsultantId) {
+      card.classList.add("is-active");
+    }
+
+    const initials = getInitials(consultant.name || "Expert");
+    const status = consultant.is_online ? "Online" : "Offline";
+
+    card.innerHTML = `
+      <div class="consultant-card-top">
+        <div class="consultant-avatar">${escapeHtml(initials)}</div>
+        <span class="consultant-status ${consultant.is_online ? "is-online" : "is-offline"}">
+          <span></span>${escapeHtml(status)}
+        </span>
+      </div>
+      <h3>${escapeHtml(consultant.name || "Agricultural Consultant")}</h3>
+      <div class="consultant-specialty">${escapeHtml(consultant.specialty || "General Agronomy")}</div>
+      <div class="consultant-rating" aria-label="Consultant rating">${renderStars(consultant.rating || 4.8)} <span>${formatNumber(consultant.rating || 4.8, 1)}</span></div>
+      <button type="button" class="button consultant-chat-button">CHAT</button>
+    `;
+
+    card.querySelector(".consultant-chat-button")?.addEventListener("click", () => openConsultantChat(consultant.id));
+    dom.consultantDirectory.appendChild(card);
+  });
+}
+
+function openConsultantChat(consultantId) {
+  state.activeConsultantId = Number(consultantId);
+  state.consultantMessages = [];
+  renderConsultantDirectory();
+  renderConsultantChat();
+  refreshConsultantMessages();
+
+  if (state.consultantPollHandle) {
+    window.clearInterval(state.consultantPollHandle);
+  }
+
+  state.consultantPollHandle = window.setInterval(refreshConsultantMessages, 2000);
+  dom.consultantChatInput?.focus();
+}
+
+function renderConsultantChat() {
+  if (!dom.consultantMessageThread) {
+    return;
+  }
+
+  const consultant = getActiveConsultant();
+
+  if (!consultant) {
+    dom.consultantChatName.textContent = "Human consultant chat";
+    dom.consultantChatStatus.textContent = "Select an expert";
+    dom.consultantChatAvatar.textContent = "WA";
+    dom.consultantMessageThread.innerHTML = "";
+    dom.consultantMessageThread.appendChild(buildEmptyState("Choose a consultant card to begin a direct chat."));
+    if (dom.consultantChatInput) {
+      dom.consultantChatInput.disabled = true;
+    }
+    if (dom.consultantChatSend) {
+      dom.consultantChatSend.disabled = true;
+    }
+    return;
+  }
+
+  dom.consultantChatName.textContent = consultant.name || "Agricultural Consultant";
+  dom.consultantChatStatus.textContent = consultant.is_online ? "Active Now" : "Offline - replies may take longer";
+  dom.consultantChatAvatar.textContent = getInitials(consultant.name || "Expert");
+  dom.consultantChatInput.disabled = false;
+  dom.consultantChatSend.disabled = false;
+  dom.consultantMessageThread.innerHTML = "";
+
+  if (!state.consultantMessages.length) {
+    dom.consultantMessageThread.appendChild(buildEmptyState("No messages yet. Send the crop, symptoms, and location to begin."));
+    return;
+  }
+
+  state.consultantMessages.forEach((message) => {
+    const bubble = document.createElement("article");
+    bubble.className = `consultant-message ${message.sender_type === "consultant" ? "is-consultant" : "is-farmer"}`;
+    bubble.innerHTML = `
+      <p>${escapeHtml(message.message_text || "")}</p>
+      <span>${formatDate(message.created_at)}</span>
+    `;
+    dom.consultantMessageThread.appendChild(bubble);
+  });
+
+  scrollMessagesToBottom(dom.consultantMessageThread);
+}
+
+function getActiveConsultant() {
+  return state.consultants.find((consultant) => consultant.id === state.activeConsultantId) || null;
+}
+
+function renderStars(value) {
+  const rating = Math.round(Number(value) || 5);
+  return Array.from({ length: 5 }, (_, index) => (index < rating ? "*" : ".")).join("");
+}
+
+function renderDashboardMetrics(payload = null) {
+  const metrics = state.dashboardMetrics;
+
+  if (dom.dashboardGreetingTitle) {
+    const name = state.auth.authenticated && state.auth.user?.full_name
+      ? state.auth.user.full_name.split(/\s+/)[0]
+      : "Farmer";
+    dom.dashboardGreetingTitle.textContent = `Hello, ${name}.`;
+  }
+
+  const resolvedCount = state.consultations.filter((consultation) => consultation.status === "resolved").length;
+  if (dom.dashboardActiveMetric) {
+    dom.dashboardActiveMetric.textContent = String(state.stats.activeConsultations || 0);
+  }
+  if (dom.dashboardResolvedMetric) {
+    dom.dashboardResolvedMetric.textContent = String(resolvedCount);
+  }
+
+  if (!metrics) {
+    if (dom.metricTemperature) {
+      dom.metricTemperature.textContent = "-- C";
+    }
+    if (dom.metricSoilMoisture) {
+      dom.metricSoilMoisture.textContent = "--%";
+    }
+    if (dom.metricCropHealth) {
+      dom.metricCropHealth.textContent = "--%";
+    }
+    if (dom.dashboardWeatherMetric) {
+      dom.dashboardWeatherMetric.textContent = "-- C";
+    }
+    if (dom.dashboardSoilMetric) {
+      dom.dashboardSoilMetric.textContent = "--%";
+    }
+    if (dom.dashboardHealthMetric) {
+      dom.dashboardHealthMetric.textContent = "--%";
+    }
+    if (dom.dashboardUpdated) {
+      dom.dashboardUpdated.textContent = "Connecting...";
+    }
+    return;
+  }
+
+  if (dom.metricTemperature) {
+    dom.metricTemperature.textContent = `${formatNumber(metrics.temperature, 1)} C`;
+  }
+  if (dom.metricSoilMoisture) {
+    dom.metricSoilMoisture.textContent = `${formatNumber(metrics.soil_moisture, 1)}%`;
+  }
+  if (dom.metricCropHealth) {
+    dom.metricCropHealth.textContent = `${formatNumber(metrics.crop_health, 1)}%`;
+  }
+  if (dom.dashboardWeatherMetric) {
+    dom.dashboardWeatherMetric.textContent = `${formatNumber(metrics.temperature, 1)} C`;
+  }
+  if (dom.dashboardSoilMetric) {
+    dom.dashboardSoilMetric.textContent = `${formatNumber(metrics.soil_moisture, 1)}%`;
+  }
+  if (dom.dashboardHealthMetric) {
+    dom.dashboardHealthMetric.textContent = `${formatNumber(metrics.crop_health, 1)}%`;
+  }
+
+  if (dom.dashboardUpdated) {
+    const source = payload?.source || state.dashboardSource;
+    const sourceLabel = source === "mysql" ? "Live MySQL" : "Demo data";
+    dom.dashboardUpdated.textContent = `${sourceLabel} - ${formatDate(metrics.timestamp)}`;
+  }
+
+  if (dom.marketPrices) {
+    if (!state.marketPrices.length) {
+      dom.marketPrices.innerHTML = '<span class="market-empty">No market prices yet</span>';
+    } else {
+      dom.marketPrices.innerHTML = state.marketPrices
+        .map((item) => {
+          const trend = item.trend === "down" ? "down" : "up";
+          return `
+            <span class="market-pill market-pill-${trend}">
+              <strong>${escapeHtml(item.crop_name)}</strong>
+              <span>${formatPhp(item.price)} ${trend}</span>
+            </span>
+          `;
+        })
+        .join("");
+    }
+  }
+
+  if (dom.dashboardAiInsight) {
+    dom.dashboardAiInsight.textContent =
+      state.dashboardInsight ||
+      "Field readings are loading. AgroLLM will summarize weather, soil, crop, and market signals here.";
+  }
+
+  if (dom.dashboardMarketTable) {
+    renderDashboardMarketTable();
+  }
+
+  renderDashboardCharts();
+}
+
+function renderDashboardMarketTable() {
+  if (!state.marketPrices.length) {
+    dom.dashboardMarketTable.innerHTML = '<tr><td colspan="3">No market prices yet.</td></tr>';
+    return;
+  }
+
+  dom.dashboardMarketTable.innerHTML = state.marketPrices
+    .map((item) => {
+      const trend = item.trend === "down" ? "down" : item.trend === "stable" ? "stable" : "up";
+      return `
+        <tr>
+          <td>${escapeHtml(item.crop_name)}</td>
+          <td>${formatPhp(item.price)}</td>
+          <td><span class="trend-pill trend-${trend}">${escapeHtml(trend)}</span></td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
+function renderDashboardCharts() {
+  if (!window.Chart) {
+    return;
+  }
+
+  const weather = state.dashboardTrends.weather || [];
+  const soil = state.dashboardTrends.soil_health || [];
+  const market = state.dashboardTrends.market_prices || [];
+
+  upsertChart("weather", dom.weatherTrendChart, {
+    type: "line",
+    labels: weather.map((point) => point.label || ""),
+    datasets: [
+      {
+        label: "Temperature C",
+        data: weather.map((point) => Number(point.value || 0)),
+        borderColor: "#10B981",
+        backgroundColor: "rgba(16, 185, 129, 0.12)",
+        tension: 0.35,
+        fill: true,
+        pointRadius: 3,
+        pointHoverRadius: 5,
+      },
+    ],
+  });
+
+  upsertChart("soil", dom.soilHealthChart, {
+    type: "line",
+    labels: soil.map((point) => point.label || ""),
+    datasets: [
+      {
+        label: "Soil moisture %",
+        data: soil.map((point) => Number(point.soil_moisture || 0)),
+        borderColor: "#059669",
+        backgroundColor: "rgba(5, 150, 105, 0.08)",
+        tension: 0.35,
+        fill: true,
+        pointRadius: 3,
+      },
+      {
+        label: "Crop health %",
+        data: soil.map((point) => Number(point.crop_health || 0)),
+        borderColor: "#8D7654",
+        backgroundColor: "rgba(141, 118, 84, 0.08)",
+        tension: 0.35,
+        fill: false,
+        pointRadius: 3,
+      },
+    ],
+  });
+
+  upsertChart("market", dom.marketPriceChart, {
+    type: "bar",
+    labels: market.map((point) => point.label || ""),
+    datasets: [
+      {
+        label: "PHP per kg",
+        data: market.map((point) => Number(point.value || 0)),
+        backgroundColor: market.map((point) =>
+          point.trend === "down"
+            ? "rgba(141, 118, 84, 0.32)"
+            : point.trend === "stable"
+              ? "rgba(100, 116, 139, 0.22)"
+              : "rgba(16, 185, 129, 0.32)"
+        ),
+        borderColor: market.map((point) =>
+          point.trend === "down"
+            ? "#8D7654"
+            : point.trend === "stable"
+              ? "#64748B"
+              : "#10B981"
+        ),
+        borderWidth: 1,
+        borderRadius: 14,
+      },
+    ],
+  });
+}
+
+function upsertChart(key, canvas, chartData) {
+  if (!canvas) {
+    return;
+  }
+
+  const labels = chartData.labels.length ? chartData.labels : ["No data"];
+  const datasets = chartData.datasets.map((dataset) => ({
+    ...dataset,
+    data: dataset.data.length ? dataset.data : [0],
+  }));
+
+  if (state.charts[key]) {
+    state.charts[key].data.labels = labels;
+    state.charts[key].data.datasets = datasets;
+    state.charts[key].update();
+    return;
+  }
+
+  state.charts[key] = new Chart(canvas.getContext("2d"), {
+    type: chartData.type,
+    data: {
+      labels,
+      datasets,
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          labels: {
+            color: "#64748B",
+            boxWidth: 10,
+            usePointStyle: true,
+          },
+        },
+      },
+      scales: {
+        x: {
+          grid: {
+            display: false,
+          },
+          ticks: {
+            color: "#64748B",
+          },
+          border: {
+            color: "#E2E8F0",
+          },
+        },
+        y: {
+          grid: {
+            color: "#E2E8F0",
+          },
+          ticks: {
+            color: "#64748B",
+          },
+          border: {
+            color: "#E2E8F0",
+          },
+        },
+      },
+    },
+  });
 }
 
 function renderSignals() {
   if (dom.sourcePill) {
     dom.sourcePill.textContent = state.sourceLabel || "Loading...";
   }
-  dom.signalOnlineExperts.textContent = String(state.stats.onlineExperts);
-  dom.signalActiveConsultations.textContent = String(state.stats.activeConsultations);
-  dom.signalResponseTime.textContent = `${state.stats.averageResponseMinutes || 0}m`;
-  dom.signalUnreadAlerts.textContent = String(state.stats.unreadNotifications);
-  dom.navUserChip.textContent = state.auth.authenticated
-    ? `${state.auth.user?.full_name || "User"} (${state.auth.roleLabel})`
-    : "Guest";
-  dom.navLogoutButton.classList.toggle("is-hidden", !state.auth.authenticated);
+  if (dom.signalOnlineExperts) {
+    dom.signalOnlineExperts.textContent = String(state.stats.onlineExperts);
+  }
+  if (dom.signalActiveConsultations) {
+    dom.signalActiveConsultations.textContent = String(state.stats.activeConsultations);
+  }
+  if (dom.signalResponseTime) {
+    dom.signalResponseTime.textContent = `${state.stats.averageResponseMinutes || 0}m`;
+  }
+  if (dom.signalUnreadAlerts) {
+    dom.signalUnreadAlerts.textContent = String(state.stats.unreadNotifications);
+  }
+  if (dom.navUserChip) {
+    dom.navUserChip.textContent = state.auth.authenticated
+      ? `${state.auth.user?.full_name || "User"} (${state.auth.roleLabel})`
+      : "Guest";
+  }
+  dom.navLogoutButton?.classList.toggle("is-hidden", !state.auth.authenticated);
 
   const spotlight = state.consultations[0];
   if (!spotlight) {
-    dom.heroThreadTitle.textContent = state.auth.authenticated
-      ? "No consultation available yet"
-      : "Sign in to view consultations";
-    dom.heroThreadStatus.textContent = state.auth.authenticated ? "Waiting" : "Guest view";
-    dom.heroThreadExpert.textContent = "No expert assigned";
-    dom.heroThreadPreview.textContent = state.auth.authenticated
-      ? "Create or open a consultation to start the case flow."
-      : "Consultation details stay private until you log in.";
+    if (dom.heroThreadTitle) {
+      dom.heroThreadTitle.textContent = state.auth.authenticated
+        ? "No consultation available yet"
+        : "Sign in to view consultations";
+    }
+    if (dom.heroThreadStatus) {
+      dom.heroThreadStatus.textContent = state.auth.authenticated ? "Waiting" : "Guest view";
+    }
+    if (dom.heroThreadExpert) {
+      dom.heroThreadExpert.textContent = "No expert assigned";
+    }
+    if (dom.heroThreadPreview) {
+      dom.heroThreadPreview.textContent = state.auth.authenticated
+        ? "Create or open a consultation to start the case flow."
+        : "Consultation details stay private until you log in.";
+    }
     return;
   }
 
-  dom.heroThreadTitle.textContent = spotlight.title;
-  dom.heroThreadStatus.textContent = spotlight.status_label || spotlight.status;
-  dom.heroThreadExpert.textContent = spotlight.assigned_expert_name
-    ? `Expert: ${spotlight.assigned_expert_name}`
-    : "AI triage active";
-  dom.heroThreadPreview.textContent = spotlight.last_message_preview || spotlight.summary || "";
+  if (dom.heroThreadTitle) {
+    dom.heroThreadTitle.textContent = spotlight.title;
+  }
+  if (dom.heroThreadStatus) {
+    dom.heroThreadStatus.textContent = spotlight.status_label || spotlight.status;
+  }
+  if (dom.heroThreadExpert) {
+    dom.heroThreadExpert.textContent = spotlight.assigned_expert_name
+      ? `Expert: ${spotlight.assigned_expert_name}`
+      : "AI triage active";
+  }
+  if (dom.heroThreadPreview) {
+    dom.heroThreadPreview.textContent = spotlight.last_message_preview || spotlight.summary || "";
+  }
 }
 
 function renderAuthSummary() {
@@ -311,7 +873,7 @@ function renderAuthSummary() {
     dom.authEmail.textContent = user.email || "";
     dom.authRoleDetail.textContent =
       state.auth.role === "farmer"
-        ? `${user.location || "Farm location"} | ${user.primary_crop || "General farming"}`
+        ? `${user.location || "Farm location"} | ${user.primary_crop || "General farming"} | ${formatFarmScale(user.farm_scale)}`
         : state.auth.role === "consultant"
           ? `${user.specialty || "General Agronomy"}`
           : "Admin access";
@@ -323,6 +885,20 @@ function renderAuthSummary() {
 
   if (dom.authCapabilities) {
     dom.authCapabilities.innerHTML = "";
+    if (state.auth.authenticated && user && state.auth.role === "farmer") {
+      [
+        `Soil: ${user.soil_type || "Not specified"}`,
+        `Common issues: ${user.common_issues || "Not specified"}`,
+      ].forEach((line) => {
+        const card = document.createElement("article");
+        card.className = "compact-card notification-card";
+        card.innerHTML = `<p>${escapeHtml(line)}</p>`;
+        dom.authCapabilities.appendChild(card);
+      });
+      dom.authCapabilities.classList.remove("is-hidden");
+    } else {
+      dom.authCapabilities.classList.add("is-hidden");
+    }
   }
 }
 
@@ -376,14 +952,13 @@ function renderConsultationList() {
   }
 
   state.consultations.forEach((consultation) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "consultation-item";
+    const card = document.createElement("article");
+    card.className = "consultation-item";
     if (consultation.id === state.activeConsultationId) {
-      button.classList.add("is-active");
+      card.classList.add("is-active");
     }
 
-    button.innerHTML = `
+    card.innerHTML = `
       <div class="consultation-item-header">
         <span class="message-author">${escapeHtml(consultation.crop || "Crop")}</span>
         <span class="consultation-meta">${formatDate(consultation.updated_at)}</span>
@@ -395,15 +970,46 @@ function renderConsultationList() {
         <span class="urgency-pill">${escapeHtml(capitalize(consultation.urgency || "medium"))}</span>
         <span class="topic-pill">${escapeHtml(consultation.category || "General Advisory")}</span>
       </div>
+      <div class="consultation-card-actions">
+        <button type="button" class="text-button" data-consultation-action="view">View Details</button>
+        <button type="button" class="text-button" data-consultation-action="update">Update</button>
+        <button type="button" class="text-button" data-consultation-action="expert">Talk to Expert</button>
+      </div>
     `;
 
-    button.addEventListener("click", () => {
+    card.querySelectorAll("[data-consultation-action]").forEach((actionButton) => {
+      actionButton.addEventListener("click", () => {
+        state.activeConsultationId = consultation.id;
+        renderConsultationList();
+        renderThread();
+
+        if (actionButton.dataset.consultationAction === "update") {
+          dom.threadInput?.focus();
+        }
+
+        if (actionButton.dataset.consultationAction === "expert") {
+          if (!state.auth.authenticated) {
+            showToast("Login required", "Log in to continue the consultation with an expert.");
+          } else {
+            dom.threadInput.value = dom.threadInput.value || "I would like to talk to an expert about this case.";
+            dom.threadInput?.focus();
+          }
+        }
+
+        document.getElementById("consultations")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    });
+
+    card.addEventListener("click", (event) => {
+      if (event.target?.closest?.("button")) {
+        return;
+      }
       state.activeConsultationId = consultation.id;
       renderConsultationList();
       renderThread();
     });
 
-    dom.consultationList.appendChild(button);
+    dom.consultationList.appendChild(card);
   });
 }
 
@@ -424,6 +1030,7 @@ function renderThread() {
     dom.threadMessages.appendChild(
       buildEmptyState("Choose an existing consultation from the queue or log in to access private consultations.")
     );
+    dom.feedbackForm?.classList.add("is-hidden");
     setThreadFormEnabled(false);
     return;
   }
@@ -444,6 +1051,9 @@ function renderThread() {
     consultation.location || "",
     consultation.assigned_expert_name ? `Assigned to ${consultation.assigned_expert_name}` : "No consultant assigned yet",
     consultation.farmer_name ? `Farmer: ${consultation.farmer_name}` : "",
+    consultation.farmer_profile?.soil_type ? `Soil: ${consultation.farmer_profile.soil_type}` : "",
+    consultation.farmer_profile?.farm_scale_label ? `Scale: ${consultation.farmer_profile.farm_scale_label}` : "",
+    consultation.farmer_profile?.common_issues ? `Common issues: ${consultation.farmer_profile.common_issues}` : "",
   ].filter(Boolean);
 
   metaItems.forEach((item) => {
@@ -465,6 +1075,9 @@ function renderThread() {
       const card = document.createElement("article");
       card.className = "message-card";
       card.dataset.sender = message.sender_type || "ai";
+      if (isEscalationMessage(message.message || "")) {
+        card.classList.add("is-escalation");
+      }
 
       const references = Array.isArray(message.references) && message.references.length
         ? `<div class="pill-row">${message.references
@@ -484,6 +1097,27 @@ function renderThread() {
       dom.threadMessages.appendChild(card);
     });
   }
+
+  if (consultation.feedback) {
+    const feedbackCard = document.createElement("article");
+    feedbackCard.className = "message-card";
+    feedbackCard.dataset.sender = "ai";
+    feedbackCard.innerHTML = `
+      <div class="message-top">
+        <span class="message-author">Feedback</span>
+        <span class="message-time">${formatDate(consultation.feedback.created_at)}</span>
+      </div>
+      <p>Helpfulness ${escapeHtml(String(consultation.feedback.helpfulness_rating))}/5 | Accuracy ${escapeHtml(String(consultation.feedback.accuracy_rating))}/5</p>
+      ${
+        consultation.feedback.comment
+          ? `<p>${escapeHtml(consultation.feedback.comment)}</p>`
+          : ""
+      }
+    `;
+    dom.threadMessages.appendChild(feedbackCard);
+  }
+
+  renderFeedbackPrompt(consultation);
 
   if (role === "farmer") {
     setThreadFormEnabled(true);
@@ -509,6 +1143,30 @@ function renderThread() {
   }
 
   scrollMessagesToBottom(dom.threadMessages);
+}
+
+function renderFeedbackPrompt(consultation) {
+  if (!dom.feedbackForm) {
+    return;
+  }
+
+  const isFarmerOwner =
+    state.auth.role === "farmer" &&
+    Number(state.auth.user?.linked_farmer_id || 0) === Number(consultation.farmer_id || 0);
+
+  if (!isFarmerOwner || !consultation.can_submit_feedback) {
+    dom.feedbackForm.classList.add("is-hidden");
+    dom.feedbackForm.dataset.consultationId = "";
+    return;
+  }
+
+  dom.feedbackForm.classList.remove("is-hidden");
+  if (dom.feedbackForm.dataset.consultationId !== String(consultation.id)) {
+    dom.feedbackHelpfulness.value = "5";
+    dom.feedbackAccuracy.value = "5";
+    dom.feedbackComment.value = "";
+    dom.feedbackForm.dataset.consultationId = String(consultation.id);
+  }
 }
 
 function populateAdminControls(consultation) {
@@ -624,6 +1282,28 @@ function renderAdminOverview() {
   `;
   dom.adminUserList.appendChild(summary);
 
+  const feedback = state.admin.feedback || {};
+  const feedbackCard = document.createElement("article");
+  feedbackCard.className = "notification-card";
+  feedbackCard.innerHTML = `
+    <div class="notification-top">
+      <span class="notification-type">Feedback</span>
+    </div>
+    <h4>${escapeHtml(String(feedback.count || 0))} ratings collected</h4>
+    <p>Helpfulness ${escapeHtml(String(feedback.avg_helpfulness || 0))}/5 | Accuracy ${escapeHtml(String(feedback.avg_accuracy || 0))}/5</p>
+    <div class="pill-row">
+      ${(feedback.trending_feedback_terms || [])
+        .map((term) => `<span class="topic-pill">${escapeHtml(term)}</span>`)
+        .join("")}
+    </div>
+    ${
+      (feedback.ai_knowledge_gap_terms || []).length
+        ? `<p>AI improvement signals: ${escapeHtml(feedback.ai_knowledge_gap_terms.join(", "))}</p>`
+        : ""
+    }
+  `;
+  dom.adminUserList.appendChild(feedbackCard);
+
   const users = Array.isArray(state.admin.users) ? state.admin.users : [];
   users.forEach((user) => {
     const card = document.createElement("article");
@@ -645,13 +1325,49 @@ function renderKnowledge() {
   }
 
   dom.knowledgeList.innerHTML = "";
+  if (dom.knowledgeTopicFilters) {
+    dom.knowledgeTopicFilters.innerHTML = "";
+  }
 
   if (!state.knowledgeHighlights.length) {
     dom.knowledgeList.appendChild(buildEmptyState("Knowledge highlights will appear here after loading."));
     return;
   }
 
-  state.knowledgeHighlights.forEach((entry) => {
+  const topics = Array.from(new Set(state.knowledgeHighlights.map((entry) => entry.topic || "Knowledge base")));
+  if (dom.knowledgeTopicFilters) {
+    topics.slice(0, 8).forEach((topic) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "assistant-inline-action";
+      button.textContent = topic;
+      button.addEventListener("click", () => {
+        state.knowledgeSearch = topic;
+        if (dom.knowledgeSearch) {
+          dom.knowledgeSearch.value = topic;
+        }
+        renderKnowledge();
+      });
+      dom.knowledgeTopicFilters.appendChild(button);
+    });
+  }
+
+  const query = state.knowledgeSearch.toLowerCase();
+  const entries = query
+    ? state.knowledgeHighlights.filter((entry) =>
+        [entry.title, entry.topic, entry.source, entry.excerpt, ...(entry.recommendations || [])]
+          .join(" ")
+          .toLowerCase()
+          .includes(query)
+      )
+    : state.knowledgeHighlights;
+
+  if (!entries.length) {
+    dom.knowledgeList.appendChild(buildEmptyState("No knowledge entry matched that search."));
+    return;
+  }
+
+  entries.forEach((entry) => {
     const article = document.createElement("article");
     article.className = "knowledge-card reveal is-visible";
     const recommendations = Array.isArray(entry.recommendations)
@@ -679,6 +1395,9 @@ function renderAssistantMessages() {
     const article = document.createElement("article");
     article.className = "assistant-message";
     article.dataset.sender = message.sender;
+    if (isEscalationMessage(message.text) || message.meta?.escalate_to_expert) {
+      article.classList.add("is-escalation");
+    }
 
     const metaActions =
       message.sender === "ai" && message.meta?.escalate_to_expert
@@ -691,7 +1410,7 @@ function renderAssistantMessages() {
                 concern: message.meta.original_question || "",
               })
             )}">
-              Create consultation from this answer
+              Request consultant review
             </button>
           </div>
         `
@@ -702,14 +1421,37 @@ function renderAssistantMessages() {
           .map((reference) => `<span class="reference-pill">${escapeHtml(reference)}</span>`)
           .join("")}</div>`
       : "";
+    const availableQuickActions = Array.isArray(message.meta?.quick_actions)
+      ? message.meta.quick_actions.filter((action) => !(message.meta?.escalate_to_expert && action.action === "consultation:create"))
+      : [];
+    const quickActions =
+      message.sender === "ai" && availableQuickActions.length
+        ? `
+          <div class="assistant-actions-row">
+            ${availableQuickActions
+              .map((action) => {
+                const payload = {
+                  action: action.action || "",
+                  prompt: action.prompt || "",
+                  title: message.meta?.suggested_title || "",
+                  crop: message.meta?.crop || "",
+                  concern: message.meta?.original_question || action.prompt || "",
+                };
+                return `<button type="button" class="assistant-inline-action" data-quick-action="${escapeAttribute(JSON.stringify(payload))}">${escapeHtml(action.label || "Open")}</button>`;
+              })
+              .join("")}
+          </div>
+        `
+        : "";
 
     article.innerHTML = `
       <div class="assistant-meta">
-        <span class="message-author">${message.sender === "user" ? "User" : "AI"}</span>
+        <span class="message-author">${message.sender === "user" ? "You" : "AgroLLM"}</span>
         <span class="message-time">${message.time ? formatDate(message.time) : "Just now"}</span>
       </div>
       <p>${escapeHtml(message.text)}</p>
       ${references}
+      ${quickActions}
       ${metaActions}
     `;
 
@@ -724,7 +1466,28 @@ function renderAssistantMessages() {
     });
   });
 
+  dom.assistantMessages.querySelectorAll("[data-quick-action]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const payload = JSON.parse(button.dataset.quickAction || "{}");
+
+      if (payload.action === "consultation:create") {
+        prefillConsultationFromAssistant(payload);
+        closeAssistant();
+        return;
+      }
+
+      if (payload.prompt) {
+        dom.assistantInput.value = payload.prompt;
+        dom.assistantForm.requestSubmit();
+      }
+    });
+  });
+
   scrollMessagesToBottom(dom.assistantMessages);
+}
+
+function isEscalationMessage(text) {
+  return String(text || "").toLowerCase().includes("let me escalate this to our human agricultural consultants");
 }
 
 function switchAuthView(view) {
@@ -768,7 +1531,7 @@ async function submitLogin(event) {
     applyBootstrap(response.state);
     dom.loginForm.reset();
     showToast("Login successful", response.message || "You are now signed in.");
-    document.getElementById("consultations")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    document.getElementById("dashboard")?.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
     showToast("Login failed", error.message);
   } finally {
@@ -787,6 +1550,9 @@ async function submitRegister(event) {
     password: dom.registerPassword.value,
     location: dom.registerLocation.value.trim(),
     primary_crop: dom.registerPrimaryCrop.value.trim(),
+    soil_type: dom.registerSoilType.value.trim(),
+    common_issues: dom.registerCommonIssues.value.trim(),
+    farm_scale: dom.registerFarmScale.value,
     specialty: dom.registerSpecialty.value.trim(),
     bio: dom.registerBio.value.trim(),
   };
@@ -809,7 +1575,7 @@ async function submitRegister(event) {
     dom.registerForm.reset();
     syncRegisterRoleFields();
     showToast("Account created", response.message || "Your account is ready.");
-    document.getElementById("consultations")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    document.getElementById("dashboard")?.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
     showToast("Registration failed", error.message);
   } finally {
@@ -936,6 +1702,98 @@ async function submitThreadMessage(event) {
     showToast("Message failed", error.message);
   } finally {
     setButtonBusy(dom.threadSubmit, false, doneLabel);
+  }
+}
+
+async function submitFeedback(event) {
+  event.preventDefault();
+
+  const consultation = getActiveConsultation();
+  if (!consultation) {
+    showToast("No consultation selected", "Choose a consultation before rating advice.");
+    return;
+  }
+
+  const payload = {
+    action: "feedback",
+    consultation_id: consultation.id,
+    rating: Number(dom.feedbackHelpfulness.value),
+    accuracy: Number(dom.feedbackAccuracy.value),
+    comment: dom.feedbackComment.value.trim(),
+  };
+
+  setButtonBusy(dom.feedbackSubmit, true, "Submitting...");
+
+  try {
+    const response = await fetchJson("api/consultations.php", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    applyBootstrap(response.state);
+    state.activeConsultationId = response.consultation?.id || consultation.id;
+    renderConsultationList();
+    renderThread();
+    showToast("Feedback saved", response.message || "Thank you for helping improve WeAgri.");
+  } catch (error) {
+    showToast("Feedback failed", error.message);
+  } finally {
+    setButtonBusy(dom.feedbackSubmit, false, "Submit feedback");
+  }
+}
+
+function submitPlatformFeedback(event) {
+  event.preventDefault();
+
+  dom.platformFeedbackConfirmation?.classList.remove("is-hidden");
+  showToast(
+    "Feedback received",
+    `Thank you for rating WeAgri ${dom.platformFeedbackRating?.value || "5"} out of 5.`
+  );
+  if (dom.platformFeedbackComment) {
+    dom.platformFeedbackComment.value = "";
+  }
+}
+
+async function submitConsultantMessage(event) {
+  event.preventDefault();
+
+  const consultant = getActiveConsultant();
+  const message = dom.consultantChatInput?.value.trim() || "";
+
+  if (!consultant) {
+    showToast("Choose an expert", "Select a consultant before sending a message.");
+    return;
+  }
+
+  if (!message) {
+    showToast("Missing message", "Type a short message for the consultant.");
+    return;
+  }
+
+  setButtonBusy(dom.consultantChatSend, true, "Sending...");
+
+  try {
+    const response = await fetchJson("api/v1/send_message.php", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        consultant_id: consultant.id,
+        message_text: message,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(response.message || "Message could not be sent.");
+    }
+
+    dom.consultantChatInput.value = "";
+    await refreshConsultantMessages();
+  } catch (error) {
+    showToast("Message failed", error.message);
+  } finally {
+    setButtonBusy(dom.consultantChatSend, false, "Send");
   }
 }
 
@@ -1091,7 +1949,7 @@ function closeAssistant() {
 function prefillConsultationFromAssistant(payload) {
   if (!state.permissions.can_create_consultation) {
     showToast("Farmer access required", "Log in as a farmer to turn this AI answer into a consultation.");
-    document.getElementById("access")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    document.getElementById("landing")?.scrollIntoView({ behavior: "smooth", block: "start" });
     return;
   }
 
@@ -1179,8 +2037,45 @@ function formatDate(value) {
   }).format(date);
 }
 
+function formatNumber(value, digits = 0) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    return "--";
+  }
+
+  return new Intl.NumberFormat(undefined, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(number);
+}
+
+function formatPhp(value) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    return "PHP --";
+  }
+
+  return `PHP ${new Intl.NumberFormat("en-PH", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(number)}`;
+}
+
 function capitalize(value) {
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : "";
+}
+
+function formatFarmScale(value) {
+  const labels = {
+    smallholder: "Smallholder",
+    commercial: "Commercial",
+    backyard: "Backyard",
+    cooperative: "Cooperative",
+  };
+
+  return labels[value] || "Smallholder";
 }
 
 function getInitials(value) {

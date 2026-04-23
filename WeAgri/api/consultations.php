@@ -123,6 +123,21 @@ try {
             'state' => weagri_bootstrap_state(),
         ]);
     }
+
+    if ($action === 'feedback') {
+        $user = weagri_require_role(['farmer']);
+        $consultation = $app->submitFeedback($payload, $user);
+        if (!$consultation) {
+            weagri_error('Consultation not found.', 404);
+        }
+
+        weagri_json_response([
+            'ok' => true,
+            'message' => 'Thank you. Your feedback helps improve AgroLLM and advisor support.',
+            'consultation' => $consultation,
+            'state' => weagri_bootstrap_state(),
+        ]);
+    }
 } catch (InvalidArgumentException $exception) {
     weagri_error($exception->getMessage(), 422);
 } catch (Throwable $exception) {

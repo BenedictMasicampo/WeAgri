@@ -6,6 +6,9 @@ CREATE TABLE IF NOT EXISTS farmers (
     full_name VARCHAR(120) NOT NULL,
     location VARCHAR(160) NOT NULL,
     primary_crop VARCHAR(80) NOT NULL,
+    soil_type VARCHAR(120) NOT NULL DEFAULT 'Not specified',
+    common_issues TEXT NULL,
+    farm_scale VARCHAR(40) NOT NULL DEFAULT 'smallholder',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -80,5 +83,21 @@ CREATE TABLE IF NOT EXISTS knowledge_base (
     tags TEXT NOT NULL,
     source VARCHAR(180) NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS consultation_feedback (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    consultation_id INT NOT NULL,
+    farmer_id INT NOT NULL,
+    advisor_id INT NULL,
+    target_type ENUM('ai', 'advisor') NOT NULL DEFAULT 'ai',
+    helpfulness_rating TINYINT NOT NULL,
+    accuracy_rating TINYINT NOT NULL,
+    comment TEXT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_consultation_feedback (consultation_id),
+    CONSTRAINT fk_feedback_consultation FOREIGN KEY (consultation_id) REFERENCES consultations(id) ON DELETE CASCADE,
+    CONSTRAINT fk_feedback_farmer FOREIGN KEY (farmer_id) REFERENCES farmers(id) ON DELETE CASCADE,
+    CONSTRAINT fk_feedback_advisor FOREIGN KEY (advisor_id) REFERENCES experts(id) ON DELETE SET NULL
 );
 

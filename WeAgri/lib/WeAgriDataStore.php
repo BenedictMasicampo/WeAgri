@@ -56,6 +56,7 @@ final class WeAgriDataStore
             ], $experts),
             'notifications' => $notifications,
             'knowledge_highlights' => $this->getKnowledgeHighlights(),
+            'feedback_analytics' => $this->getFeedbackAnalytics(),
             'admin' => $user !== null && $user['role'] === 'admin' ? $this->getAdminOverview() : null,
         ];
     }
@@ -88,6 +89,9 @@ final class WeAgriDataStore
         $password = (string) ($payload['password'] ?? '');
         $location = $this->sanitizeString((string) ($payload['location'] ?? ''));
         $primaryCrop = $this->sanitizeString((string) ($payload['primary_crop'] ?? ''));
+        $soilType = $this->sanitizeString((string) ($payload['soil_type'] ?? ''));
+        $commonIssues = $this->sanitizeString((string) ($payload['common_issues'] ?? ''));
+        $farmScale = $this->normalizeFarmScale($payload['farm_scale'] ?? 'smallholder');
         $specialty = $this->sanitizeString((string) ($payload['specialty'] ?? ''));
         $bio = $this->sanitizeString((string) ($payload['bio'] ?? ''));
 
@@ -119,6 +123,9 @@ final class WeAgriDataStore
                 'password_hash' => password_hash($password, PASSWORD_DEFAULT),
                 'location' => $location,
                 'primary_crop' => $primaryCrop,
+                'soil_type' => $soilType,
+                'common_issues' => $commonIssues,
+                'farm_scale' => $farmScale,
                 'specialty' => $specialty,
                 'bio' => $bio,
             ]);
@@ -131,6 +138,9 @@ final class WeAgriDataStore
             'password_hash' => password_hash($password, PASSWORD_DEFAULT),
             'location' => $location,
             'primary_crop' => $primaryCrop,
+            'soil_type' => $soilType,
+            'common_issues' => $commonIssues,
+            'farm_scale' => $farmScale,
             'specialty' => $specialty,
             'bio' => $bio,
         ]);
@@ -321,6 +331,33 @@ final class WeAgriDataStore
             : $this->updateConsultationStatusInJson($consultation, $status);
     }
 
+    public function submitFeedback(array $payload, array $user): ?array
+    {
+        $this->assertRole($user, ['farmer']);
+
+        $consultationId = (int) ($payload['consultation_id'] ?? 0);
+        $rating = (int) ($payload['rating'] ?? 0);
+        $accuracy = (int) ($payload['accuracy'] ?? 0);
+        $comment = $this->sanitizeString((string) ($payload['comment'] ?? ''));
+
+        if ($consultationId <= 0) {
+            throw new InvalidArgumentException('Consultation id is required.');
+        }
+
+        if ($rating < 1 || $rating > 5 || $accuracy < 1 || $accuracy > 5) {
+            throw new InvalidArgumentException('Please rate helpfulness and accuracy from 1 to 5.');
+        }
+
+        $consultation = $this->getConsultation($consultationId, $user);
+        if (!$consultation) {
+            return null;
+        }
+
+        return $this->pdo
+            ? $this->submitFeedbackInDatabase($consultation, $rating, $accuracy, $comment, $user)
+            : $this->submitFeedbackInJson($consultation, $rating, $accuracy, $comment, $user);
+    }
+
     public function markNotificationRead(int $notificationId, ?array $user = null): bool
     {
         if ($notificationId <= 0) {
@@ -433,7 +470,7 @@ final class WeAgriDataStore
                 'excerpt' => $this->excerpt((string) $entry['content'], 150),
                 'recommendations' => array_slice($this->normalizeLines($entry['recommendations'] ?? []), 0, 2),
             ];
-        }, array_slice($entries, 0, 4));
+        }, $entries);
     }
 
     public function getConsultations(?array $user = null): array
@@ -478,13 +515,16 @@ final class WeAgriDataStore
 
             if ($payload['role'] === 'farmer') {
                 $statement = $this->pdo->prepare(
-                    'INSERT INTO farmers (full_name, location, primary_crop, created_at)
-                     VALUES (:full_name, :location, :primary_crop, :created_at)'
+                    'INSERT INTO farmers (full_name, location, primary_crop, soil_type, common_issues, farm_scale, created_at)
+                     VALUES (:full_name, :location, :primary_crop, :soil_type, :common_issues, :farm_scale, :created_at)'
                 );
                 $statement->execute([
                     'full_name' => $payload['full_name'],
                     'location' => $payload['location'] !== '' ? $payload['location'] : 'Farm location',
                     'primary_crop' => $payload['primary_crop'] !== '' ? $payload['primary_crop'] : 'Mixed crops',
+                    'soil_type' => $payload['soil_type'] !== '' ? $payload['soil_type'] : 'Not specified',
+                    'common_issues' => $payload['common_issues'] !== '' ? $payload['common_issues'] : 'Not specified',
+                    'farm_scale' => $payload['farm_scale'],
                     'created_at' => $this->now(),
                 ]);
                 $linkedFarmerId = (int) $this->pdo->lastInsertId();
@@ -543,6 +583,9 @@ final class WeAgriDataStore
                 'full_name' => $payload['full_name'],
                 'location' => $payload['location'] !== '' ? $payload['location'] : 'Farm location',
                 'primary_crop' => $payload['primary_crop'] !== '' ? $payload['primary_crop'] : 'Mixed crops',
+                'soil_type' => $payload['soil_type'] !== '' ? $payload['soil_type'] : 'Not specified',
+                'common_issues' => $payload['common_issues'] !== '' ? $payload['common_issues'] : 'Not specified',
+                'farm_scale' => $payload['farm_scale'],
             ];
         }
 
@@ -580,7 +623,8 @@ final class WeAgriDataStore
         $consultationStatement = $this->pdo->query(
             'SELECT c.id, c.farmer_id, c.title, c.crop, c.category, c.urgency, c.status, c.location,
                     c.assigned_expert_id, c.summary, c.created_at, c.updated_at,
-                    f.full_name AS farmer_name, e.full_name AS expert_name
+                    f.full_name AS farmer_name, f.soil_type, f.common_issues, f.farm_scale,
+                    e.full_name AS expert_name
              FROM consultations c
              INNER JOIN farmers f ON f.id = c.farmer_id
              LEFT JOIN experts e ON e.id = c.assigned_expert_id
@@ -608,7 +652,18 @@ final class WeAgriDataStore
             ];
         }
 
-        $consultations = array_map(function (array $consultation) use ($messagesByConsultation): array {
+        $feedbackStatement = $this->pdo->query(
+            'SELECT id, consultation_id, farmer_id, advisor_id, target_type, helpfulness_rating, accuracy_rating, comment, created_at
+             FROM consultation_feedback
+             ORDER BY created_at DESC, id DESC'
+        );
+        $feedbackRows = $feedbackStatement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        $feedbackByConsultation = [];
+        foreach ($feedbackRows as $feedback) {
+            $feedbackByConsultation[(int) $feedback['consultation_id']] = $this->formatFeedbackRow($feedback);
+        }
+
+        $consultations = array_map(function (array $consultation) use ($messagesByConsultation, $feedbackByConsultation): array {
             $consultationId = (int) $consultation['id'];
             $messages = $messagesByConsultation[$consultationId] ?? [];
             $lastMessage = $messages !== [] ? end($messages) : null;
@@ -617,6 +672,14 @@ final class WeAgriDataStore
                 'id' => $consultationId,
                 'farmer_id' => (int) $consultation['farmer_id'],
                 'farmer_name' => $consultation['farmer_name'],
+                'farmer_profile' => $this->publicFarmerProfile([
+                    'full_name' => $consultation['farmer_name'],
+                    'location' => $consultation['location'],
+                    'primary_crop' => $consultation['crop'],
+                    'soil_type' => $consultation['soil_type'] ?? 'Not specified',
+                    'common_issues' => $consultation['common_issues'] ?? 'Not specified',
+                    'farm_scale' => $consultation['farm_scale'] ?? 'smallholder',
+                ]),
                 'title' => $consultation['title'],
                 'crop' => $consultation['crop'],
                 'category' => $consultation['category'],
@@ -632,6 +695,8 @@ final class WeAgriDataStore
                 'created_at' => $consultation['created_at'],
                 'updated_at' => $consultation['updated_at'],
                 'messages' => $messages,
+                'feedback' => $feedbackByConsultation[$consultationId] ?? null,
+                'can_submit_feedback' => !isset($feedbackByConsultation[$consultationId]) && $this->consultationHasAdvice($messages),
                 'message_count' => count($messages),
                 'last_message_preview' => $lastMessage ? $this->excerpt((string) $lastMessage['message'], 92) : 'No messages yet.',
             ];
@@ -659,9 +724,14 @@ final class WeAgriDataStore
             $messagesByConsultation[(int) $message['consultation_id']][] = $message;
         }
 
+        $feedbackByConsultation = [];
+        foreach ($data['feedback'] as $feedback) {
+            $feedbackByConsultation[(int) $feedback['consultation_id']] = $this->formatFeedbackRow($feedback);
+        }
+
         usort($data['consultations'], fn(array $left, array $right): int => strcmp($right['updated_at'], $left['updated_at']));
 
-        $consultations = array_map(function (array $consultation) use ($farmers, $experts, $messagesByConsultation): array {
+        $consultations = array_map(function (array $consultation) use ($farmers, $experts, $messagesByConsultation, $feedbackByConsultation): array {
             $consultationId = (int) $consultation['id'];
             $messages = $messagesByConsultation[$consultationId] ?? [];
             $lastMessage = $messages !== [] ? end($messages) : null;
@@ -674,6 +744,7 @@ final class WeAgriDataStore
                 'id' => $consultationId,
                 'farmer_id' => (int) $consultation['farmer_id'],
                 'farmer_name' => $farmer['full_name'],
+                'farmer_profile' => $this->publicFarmerProfile($farmer),
                 'title' => $consultation['title'],
                 'crop' => $consultation['crop'],
                 'category' => $consultation['category'],
@@ -689,6 +760,8 @@ final class WeAgriDataStore
                 'created_at' => $consultation['created_at'],
                 'updated_at' => $consultation['updated_at'],
                 'messages' => $messages,
+                'feedback' => $feedbackByConsultation[$consultationId] ?? null,
+                'can_submit_feedback' => !isset($feedbackByConsultation[$consultationId]) && $this->consultationHasAdvice($messages),
                 'message_count' => count($messages),
                 'last_message_preview' => $lastMessage ? $this->excerpt((string) $lastMessage['message'], 92) : 'No messages yet.',
             ];
@@ -1119,6 +1192,99 @@ final class WeAgriDataStore
         return $this->getConsultation((int) $consultation['id'], ['role' => 'admin']) ?? [];
     }
 
+    private function submitFeedbackInDatabase(
+        array $consultation,
+        int $rating,
+        int $accuracy,
+        string $comment,
+        array $user
+    ): array {
+        $targetType = $consultation['assigned_expert_id'] ? 'advisor' : 'ai';
+        $statement = $this->pdo->prepare(
+            'INSERT INTO consultation_feedback
+                (consultation_id, farmer_id, advisor_id, target_type, helpfulness_rating, accuracy_rating, comment, created_at)
+             VALUES
+                (:consultation_id, :farmer_id, :advisor_id, :target_type, :helpfulness_rating, :accuracy_rating, :comment, :created_at)
+             ON DUPLICATE KEY UPDATE
+                advisor_id = VALUES(advisor_id),
+                target_type = VALUES(target_type),
+                helpfulness_rating = VALUES(helpfulness_rating),
+                accuracy_rating = VALUES(accuracy_rating),
+                comment = VALUES(comment),
+                created_at = VALUES(created_at)'
+        );
+        $statement->execute([
+            'consultation_id' => (int) $consultation['id'],
+            'farmer_id' => (int) ($user['linked_farmer_id'] ?? $consultation['farmer_id']),
+            'advisor_id' => $consultation['assigned_expert_id'],
+            'target_type' => $targetType,
+            'helpfulness_rating' => $rating,
+            'accuracy_rating' => $accuracy,
+            'comment' => $comment,
+            'created_at' => $this->now(),
+        ]);
+
+        $this->insertNotificationRow(
+            'Feedback received',
+            'The farmer rated this consultation for helpfulness and accuracy.',
+            'system',
+            (int) $consultation['id']
+        );
+
+        return $this->getConsultation((int) $consultation['id'], ['role' => 'admin']) ?? [];
+    }
+
+    private function submitFeedbackInJson(
+        array $consultation,
+        int $rating,
+        int $accuracy,
+        string $comment,
+        array $user
+    ): array {
+        $data = $this->readJson();
+        $timestamp = $this->now();
+        $existingIndex = null;
+
+        foreach ($data['feedback'] as $index => $feedback) {
+            if ((int) $feedback['consultation_id'] === (int) $consultation['id']) {
+                $existingIndex = $index;
+                break;
+            }
+        }
+
+        $record = [
+            'id' => $existingIndex === null ? $this->nextId($data['feedback']) : (int) $data['feedback'][$existingIndex]['id'],
+            'consultation_id' => (int) $consultation['id'],
+            'farmer_id' => (int) ($user['linked_farmer_id'] ?? $consultation['farmer_id']),
+            'advisor_id' => $consultation['assigned_expert_id'],
+            'target_type' => $consultation['assigned_expert_id'] ? 'advisor' : 'ai',
+            'helpfulness_rating' => $rating,
+            'accuracy_rating' => $accuracy,
+            'comment' => $comment,
+            'created_at' => $timestamp,
+        ];
+
+        if ($existingIndex === null) {
+            $data['feedback'][] = $record;
+        } else {
+            $data['feedback'][$existingIndex] = $record;
+        }
+
+        $data['notifications'][] = $this->notificationRecord(
+            $this->nextId($data['notifications']),
+            'Feedback received',
+            'The farmer rated this consultation for helpfulness and accuracy.',
+            'system',
+            false,
+            (int) $consultation['id'],
+            $timestamp
+        );
+
+        $this->writeJson($data);
+
+        return $this->getConsultation((int) $consultation['id'], ['role' => 'admin']) ?? [];
+    }
+
     private function filterNotifications(array $notifications, ?array $user, array $visibleConsultationIds): array
     {
         if ($user === null) {
@@ -1152,7 +1318,8 @@ final class WeAgriDataStore
                  ORDER BY id ASC'
             );
 
-            return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            return $rows !== [] ? $rows : $this->defaultKnowledgeBase();
         }
 
         $data = $this->readJson();
@@ -1168,7 +1335,7 @@ final class WeAgriDataStore
 
         if ($this->pdo) {
             $statement = $this->pdo->prepare(
-                'SELECT id, full_name, location, primary_crop
+                'SELECT id, full_name, location, primary_crop, soil_type, common_issues, farm_scale
                  FROM farmers
                  WHERE id = :id
                  LIMIT 1'
@@ -1246,7 +1413,101 @@ final class WeAgriDataStore
                 'role' => $user['role'],
                 'role_label' => $this->roleLabel($user['role']),
             ], array_slice($users, 0, 10)),
+            'feedback' => $this->getFeedbackAnalytics(),
         ];
+    }
+
+    private function getFeedbackAnalytics(): array
+    {
+        $feedback = $this->getFeedbackRows();
+        $experts = [];
+        foreach ($this->getExperts() as $expert) {
+            $experts[(int) $expert['id']] = $expert['full_name'];
+        }
+
+        $advisorStats = [];
+        $topicCounts = [];
+        $aiGapTerms = [];
+        $totalHelpfulness = 0;
+        $totalAccuracy = 0;
+
+        foreach ($feedback as $row) {
+            $totalHelpfulness += (int) $row['helpfulness_rating'];
+            $totalAccuracy += (int) $row['accuracy_rating'];
+
+            $advisorId = (int) ($row['advisor_id'] ?? 0);
+            if ($advisorId > 0) {
+                $advisorStats[$advisorId] ??= [
+                    'advisor_id' => $advisorId,
+                    'advisor_name' => $experts[$advisorId] ?? 'Advisor',
+                    'count' => 0,
+                    'avg_helpfulness' => 0,
+                    'avg_accuracy' => 0,
+                    '_helpfulness_total' => 0,
+                    '_accuracy_total' => 0,
+                ];
+                $advisorStats[$advisorId]['count']++;
+                $advisorStats[$advisorId]['_helpfulness_total'] += (int) $row['helpfulness_rating'];
+                $advisorStats[$advisorId]['_accuracy_total'] += (int) $row['accuracy_rating'];
+            }
+
+            foreach (preg_split('/[^\p{L}\p{N}]+/u', mb_strtolower((string) ($row['comment'] ?? '')), -1, PREG_SPLIT_NO_EMPTY) ?: [] as $word) {
+                if (mb_strlen($word) < 4 || in_array($word, ['good', 'help', 'very', 'with', 'crop', 'farm'], true)) {
+                    continue;
+                }
+                $topicCounts[$word] = ($topicCounts[$word] ?? 0) + 1;
+                if (($row['target_type'] ?? '') === 'ai' && ((int) $row['helpfulness_rating'] <= 3 || (int) $row['accuracy_rating'] <= 3)) {
+                    $aiGapTerms[$word] = ($aiGapTerms[$word] ?? 0) + 1;
+                }
+            }
+        }
+
+        foreach ($advisorStats as &$stat) {
+            $stat['avg_helpfulness'] = round($stat['_helpfulness_total'] / max(1, $stat['count']), 1);
+            $stat['avg_accuracy'] = round($stat['_accuracy_total'] / max(1, $stat['count']), 1);
+            unset($stat['_helpfulness_total'], $stat['_accuracy_total']);
+        }
+        unset($stat);
+
+        usort($advisorStats, fn(array $left, array $right): int => $right['avg_helpfulness'] <=> $left['avg_helpfulness']);
+        arsort($topicCounts);
+        arsort($aiGapTerms);
+
+        return [
+            'count' => count($feedback),
+            'avg_helpfulness' => $feedback === [] ? 0 : round($totalHelpfulness / count($feedback), 1),
+            'avg_accuracy' => $feedback === [] ? 0 : round($totalAccuracy / count($feedback), 1),
+            'top_advisors' => array_slice(array_values($advisorStats), 0, 5),
+            'trending_feedback_terms' => array_slice(array_keys($topicCounts), 0, 8),
+            'ai_knowledge_gap_terms' => array_slice(array_keys($aiGapTerms), 0, 8),
+            'recent_comments' => array_values(array_filter(array_map(
+                fn(array $row): array => [
+                    'consultation_id' => (int) $row['consultation_id'],
+                    'rating' => (int) $row['helpfulness_rating'],
+                    'accuracy' => (int) $row['accuracy_rating'],
+                    'comment' => $row['comment'] ?? '',
+                    'created_at' => $row['created_at'] ?? '',
+                ],
+                array_slice($feedback, 0, 5)
+            ), fn(array $row): bool => trim((string) $row['comment']) !== '')),
+        ];
+    }
+
+    private function getFeedbackRows(): array
+    {
+        if ($this->pdo) {
+            $statement = $this->pdo->query(
+                'SELECT id, consultation_id, farmer_id, advisor_id, target_type, helpfulness_rating, accuracy_rating, comment, created_at
+                 FROM consultation_feedback
+                 ORDER BY created_at DESC, id DESC'
+            );
+            return array_map(fn(array $row): array => $this->formatFeedbackRow($row), $statement->fetchAll(PDO::FETCH_ASSOC) ?: []);
+        }
+
+        $data = $this->readJson();
+        $rows = array_map(fn(array $row): array => $this->formatFeedbackRow($row), $data['feedback']);
+        usort($rows, fn(array $left, array $right): int => strcmp((string) $right['created_at'], (string) $left['created_at']));
+        return $rows;
     }
 
     private function getUsers(): array
@@ -1287,6 +1548,9 @@ final class WeAgriDataStore
         if ($farmer) {
             $user['location'] = $farmer['location'];
             $user['primary_crop'] = $farmer['primary_crop'];
+            $user['soil_type'] = $farmer['soil_type'] ?? null;
+            $user['common_issues'] = $farmer['common_issues'] ?? null;
+            $user['farm_scale'] = $farmer['farm_scale'] ?? null;
         }
 
         if ($expert) {
@@ -1308,6 +1572,9 @@ final class WeAgriDataStore
                 if ((int) $farmer['id'] === (int) $user['linked_farmer_id']) {
                     $user['location'] = $farmer['location'];
                     $user['primary_crop'] = $farmer['primary_crop'];
+                    $user['soil_type'] = $farmer['soil_type'] ?? null;
+                    $user['common_issues'] = $farmer['common_issues'] ?? null;
+                    $user['farm_scale'] = $farmer['farm_scale'] ?? null;
                 }
             }
         }
@@ -1338,10 +1605,52 @@ final class WeAgriDataStore
             'role_label' => $this->roleLabel($user['role']),
             'location' => $user['location'] ?? null,
             'primary_crop' => $user['primary_crop'] ?? null,
+            'soil_type' => $user['soil_type'] ?? null,
+            'common_issues' => $user['common_issues'] ?? null,
+            'farm_scale' => $user['farm_scale'] ?? null,
             'specialty' => $user['specialty'] ?? null,
             'linked_farmer_id' => $user['linked_farmer_id'] ?? null,
             'linked_expert_id' => $user['linked_expert_id'] ?? null,
         ];
+    }
+
+    private function publicFarmerProfile(array $farmer): array
+    {
+        return [
+            'full_name' => $farmer['full_name'] ?? 'Farmer',
+            'location' => $farmer['location'] ?? 'Farm location',
+            'primary_crop' => $farmer['primary_crop'] ?? 'Mixed crops',
+            'soil_type' => $farmer['soil_type'] ?? 'Not specified',
+            'common_issues' => $farmer['common_issues'] ?? 'Not specified',
+            'farm_scale' => $farmer['farm_scale'] ?? 'smallholder',
+            'farm_scale_label' => $this->farmScaleLabel((string) ($farmer['farm_scale'] ?? 'smallholder')),
+        ];
+    }
+
+    private function formatFeedbackRow(array $row): array
+    {
+        return [
+            'id' => (int) ($row['id'] ?? 0),
+            'consultation_id' => (int) ($row['consultation_id'] ?? 0),
+            'farmer_id' => (int) ($row['farmer_id'] ?? 0),
+            'advisor_id' => isset($row['advisor_id']) && $row['advisor_id'] !== null ? (int) $row['advisor_id'] : null,
+            'target_type' => $row['target_type'] ?? 'ai',
+            'helpfulness_rating' => (int) ($row['helpfulness_rating'] ?? 0),
+            'accuracy_rating' => (int) ($row['accuracy_rating'] ?? 0),
+            'comment' => $row['comment'] ?? '',
+            'created_at' => $row['created_at'] ?? '',
+        ];
+    }
+
+    private function consultationHasAdvice(array $messages): bool
+    {
+        foreach ($messages as $message) {
+            if (in_array((string) ($message['sender_type'] ?? ''), ['ai', 'expert'], true)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function permissionsFor(?array $user): array
@@ -1472,6 +1781,7 @@ final class WeAgriDataStore
             }
 
             $this->ensureUsersTable($pdo);
+            $this->ensureAppSchema($pdo);
             $this->pdo = $pdo;
         } catch (Throwable) {
             $this->pdo = null;
@@ -1494,6 +1804,47 @@ final class WeAgriDataStore
                 CONSTRAINT fk_users_expert FOREIGN KEY (linked_expert_id) REFERENCES experts(id) ON DELETE SET NULL
             )"
         );
+    }
+
+    private function ensureAppSchema(PDO $pdo): void
+    {
+        $this->addColumnIfMissing($pdo, 'farmers', 'soil_type', "VARCHAR(120) NOT NULL DEFAULT 'Not specified'");
+        $this->addColumnIfMissing($pdo, 'farmers', 'common_issues', "TEXT NULL");
+        $this->addColumnIfMissing($pdo, 'farmers', 'farm_scale', "VARCHAR(40) NOT NULL DEFAULT 'smallholder'");
+
+        $pdo->exec(
+            "CREATE TABLE IF NOT EXISTS consultation_feedback (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                consultation_id INT NOT NULL,
+                farmer_id INT NOT NULL,
+                advisor_id INT NULL,
+                target_type ENUM('ai', 'advisor') NOT NULL DEFAULT 'ai',
+                helpfulness_rating TINYINT NOT NULL,
+                accuracy_rating TINYINT NOT NULL,
+                comment TEXT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uniq_consultation_feedback (consultation_id),
+                CONSTRAINT fk_feedback_consultation FOREIGN KEY (consultation_id) REFERENCES consultations(id) ON DELETE CASCADE,
+                CONSTRAINT fk_feedback_farmer FOREIGN KEY (farmer_id) REFERENCES farmers(id) ON DELETE CASCADE,
+                CONSTRAINT fk_feedback_advisor FOREIGN KEY (advisor_id) REFERENCES experts(id) ON DELETE SET NULL
+            )"
+        );
+    }
+
+    private function addColumnIfMissing(PDO $pdo, string $table, string $column, string $definition): void
+    {
+        $statement = $pdo->prepare(
+            'SELECT COUNT(*)
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE()
+               AND TABLE_NAME = :table
+               AND COLUMN_NAME = :column'
+        );
+        $statement->execute(['table' => $table, 'column' => $column]);
+
+        if ((int) $statement->fetchColumn() === 0) {
+            $pdo->exec("ALTER TABLE {$table} ADD COLUMN {$column} {$definition}");
+        }
     }
 
     private function ensureJsonStorageExists(): void
@@ -1555,6 +1906,17 @@ final class WeAgriDataStore
             }
         }
 
+        foreach ($data['farmers'] as &$farmer) {
+            $farmer['soil_type'] = $farmer['soil_type'] ?? 'Not specified';
+            $farmer['common_issues'] = $farmer['common_issues'] ?? 'Not specified';
+            $farmer['farm_scale'] = $this->normalizeFarmScale($farmer['farm_scale'] ?? 'smallholder');
+        }
+        unset($farmer);
+
+        if ($data['knowledge_base'] === []) {
+            $data['knowledge_base'] = $this->defaultKnowledgeBase();
+        }
+
         return $data;
     }
 
@@ -1567,9 +1929,121 @@ final class WeAgriDataStore
             'consultations' => [],
             'messages' => [],
             'notifications' => [],
-            'knowledge_base' => [],
+            'feedback' => [],
+            'knowledge_base' => $this->defaultKnowledgeBase(),
         ];
     }
+
+    private function defaultKnowledgeBase(): array
+    {
+        return [
+            [
+                'id' => 1,
+                'title' => 'Corn pest scouting guide',
+                'topic' => 'Pest and Disease',
+                'content' => 'Common corn pests include corn borer, armyworm, corn earworm, aphids, and cutworms. Scout weekly by checking leaf whorls, stems, ears, and the soil near young plants.',
+                'recommendations' => [
+                    'Scout early morning and check at least five areas of the field.',
+                    'Remove weeds and crop debris that shelter insects.',
+                    'Use neem oil or insecticidal soap for soft-bodied pests when label directions allow.',
+                ],
+                'tags' => ['corn', 'maize', 'pest', 'armyworm', 'borer', 'aphid', 'cutworm'],
+                'source' => 'WeAgri local agronomy guide',
+            ],
+            [
+                'id' => 2,
+                'title' => 'Rice yellowing and nitrogen stress',
+                'topic' => 'Crop Nutrition',
+                'content' => 'Yellowing older rice leaves often point to nitrogen deficiency, but water stress, poor roots, and disease can also cause pale growth. Check leaf age, soil moisture, and field drainage before fertilizing.',
+                'recommendations' => [
+                    'Check whether older leaves turn yellow first.',
+                    'Apply nitrogen in split doses rather than one heavy dose.',
+                    'Keep field moisture steady after fertilizing.',
+                ],
+                'tags' => ['rice', 'yellowing', 'nitrogen', 'fertilizer', 'nutrition'],
+                'source' => 'WeAgri crop nutrition guide',
+            ],
+            [
+                'id' => 3,
+                'title' => 'Tomato leaf spot and blight basics',
+                'topic' => 'Pest and Disease',
+                'content' => 'Tomato leaf spots and blights are often encouraged by wet leaves, dense planting, and infected plant debris. Brown spots that spread quickly need sanitation and airflow improvements.',
+                'recommendations' => [
+                    'Remove heavily infected leaves and dispose of them away from the field.',
+                    'Avoid overhead watering and improve spacing.',
+                    'Use a labeled copper fungicide when spots continue spreading.',
+                ],
+                'tags' => ['tomato', 'leaf spot', 'blight', 'fungus', 'copper'],
+                'source' => 'WeAgri pest and disease guide',
+            ],
+            [
+                'id' => 4,
+                'title' => 'Soil health starter practices',
+                'topic' => 'Soil Management',
+                'content' => 'Healthy soil holds moisture, drains excess water, supports roots, and has enough organic matter. Compost, crop residues, cover crops, and reduced disturbance can improve soil over time.',
+                'recommendations' => [
+                    'Add compost or well-rotted manure when available.',
+                    'Keep soil covered with mulch or crop residue.',
+                    'Test soil pH and nutrients before applying large fertilizer rates.',
+                ],
+                'tags' => ['soil', 'compost', 'organic matter', 'pH', 'mulch'],
+                'source' => 'WeAgri soil health guide',
+            ],
+            [
+                'id' => 5,
+                'title' => 'Basic fertilizer timing',
+                'topic' => 'Crop Nutrition',
+                'content' => 'Fertilizer works best when matched to crop stage. Nitrogen supports leafy growth, phosphorus supports roots, and potassium helps crop strength and stress tolerance.',
+                'recommendations' => [
+                    'Apply fertilizer in split doses when possible.',
+                    'Avoid fertilizing immediately before heavy rain.',
+                    'Use compost with mineral fertilizer to improve long-term soil condition.',
+                ],
+                'tags' => ['fertilizer', 'nitrogen', 'phosphorus', 'potassium', 'nutrients'],
+                'source' => 'WeAgri fertilizer guide',
+            ],
+            [
+                'id' => 6,
+                'title' => 'Irrigation and water stress',
+                'topic' => 'Water and Irrigation',
+                'content' => 'Good irrigation keeps the root zone moist without waterlogging. Too little water causes wilting and poor growth; too much water can suffocate roots and encourage disease.',
+                'recommendations' => [
+                    'Check soil moisture 5-10 cm deep before watering.',
+                    'Water in the morning when possible.',
+                    'Clear drainage after heavy rain.',
+                ],
+                'tags' => ['water', 'irrigation', 'wilting', 'drainage', 'water stress'],
+                'source' => 'WeAgri irrigation guide',
+            ],
+            [
+                'id' => 7,
+                'title' => 'Weather preparation for farms',
+                'topic' => 'Weather Preparedness',
+                'content' => 'Heavy rain, strong wind, and heat can damage crops. Farmers can reduce losses by preparing drainage, supporting weak plants, and avoiding fertilizer or sprays before storms.',
+                'recommendations' => [
+                    'Clear canals and drainage paths before heavy rain.',
+                    'Harvest mature produce early when a storm is expected.',
+                    'Inspect for disease after long wet periods.',
+                ],
+                'tags' => ['weather', 'rain', 'storm', 'heat', 'preparedness'],
+                'source' => 'WeAgri weather advisory guide',
+            ],
+            [
+                'id' => 8,
+                'title' => 'Sustainable farming basics',
+                'topic' => 'Sustainable Farming',
+                'content' => 'Sustainable farming protects soil, water, beneficial insects, and long-term productivity. It combines crop rotation, organic matter, careful input use, and regular observation.',
+                'recommendations' => [
+                    'Rotate crops to reduce pest and disease buildup.',
+                    'Protect beneficial insects by avoiding unnecessary sprays.',
+                    'Keep records so each season improves the next one.',
+                ],
+                'tags' => ['sustainable', 'rotation', 'beneficial insects', 'records', 'farm management'],
+                'source' => 'WeAgri sustainable practices guide',
+            ],
+        ];
+    }
+
     private function assertRole(array $user, array $roles): void
     {
         if (!in_array($user['role'] ?? '', $roles, true)) {
@@ -1587,6 +2061,22 @@ final class WeAgriDataStore
     {
         $value = mb_strtolower($this->sanitizeString((string) $value));
         return in_array($value, ['low', 'medium', 'high', 'critical'], true) ? $value : 'medium';
+    }
+
+    private function normalizeFarmScale(mixed $value): string
+    {
+        $value = mb_strtolower($this->sanitizeString((string) $value));
+        return in_array($value, ['smallholder', 'commercial', 'backyard', 'cooperative'], true) ? $value : 'smallholder';
+    }
+
+    private function farmScaleLabel(string $value): string
+    {
+        return match ($this->normalizeFarmScale($value)) {
+            'commercial' => 'Commercial',
+            'backyard' => 'Backyard',
+            'cooperative' => 'Cooperative',
+            default => 'Smallholder',
+        };
     }
 
     private function normalizeLines(array|string|null $lines): array
